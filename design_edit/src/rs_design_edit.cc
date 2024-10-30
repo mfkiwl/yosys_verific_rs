@@ -1566,6 +1566,8 @@ struct DesignEditRapidSilicon : public ScriptPass {
           for (auto conn : cell->connections()) {
             IdString portName = conn.first;
             RTLIL::SigSpec actual = conn.second;
+            bool unset_port = true;
+            RTLIL::SigSpec sigspec;
             if (actual.is_chunk()) {
               RTLIL::Wire *wire = actual.as_chunk().wire;
               if (wire != NULL) {
@@ -1584,19 +1586,6 @@ struct DesignEditRapidSilicon : public ScriptPass {
                       prim_out_bits.insert(bit);
                     }
                   }
-                }
-              } else {
-                RTLIL::SigSpec const_sig = actual;
-                if (GetSize(const_sig) != 0)
-                {
-                  RTLIL::SigSig new_conn;
-                  RTLIL::Wire *new_wire = original_mod->addWire(NEW_ID, GetSize(const_sig));
-                  cell->unsetPort(portName);
-                  cell->setPort(portName, new_wire);
-                  new_conn.first = new_wire;
-                  new_conn.second = const_sig;
-                  original_mod->connect(new_conn);
-                  process_wire(cell, portName, new_wire);
                 }
               }
             } else {
@@ -1622,6 +1611,31 @@ struct DesignEditRapidSilicon : public ScriptPass {
                   }
                 }
               }
+            }
+            for (SigBit bit : conn.second)
+            {
+              if (bit.wire == nullptr)
+              {
+                if (unset_port)
+                {
+                  cell->unsetPort(portName);
+                  unset_port = false;
+                }
+                RTLIL::SigSig new_conn;
+                RTLIL::Wire *new_wire = original_mod->addWire(NEW_ID, 1);
+                new_conn.first = new_wire;
+                new_conn.second = bit;
+                original_mod->connect(new_conn);
+                new_outs.insert(new_wire->name.str());
+                sigspec.append(new_wire);
+              } else {
+                sigspec.append(bit);
+              }
+            }
+
+            if (!unset_port)
+            {
+              cell->setPort(portName, sigspec);
             }
           }
         } else {
