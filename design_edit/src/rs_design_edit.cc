@@ -1614,6 +1614,7 @@ struct DesignEditRapidSilicon : public ScriptPass {
             }
             for (SigBit bit : conn.second)
             {
+              // Route constant bits through fabric
               if (bit.wire == nullptr)
               {
                 if (unset_port)
