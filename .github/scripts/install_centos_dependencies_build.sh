@@ -29,7 +29,7 @@ yum install -y libffi-devel
 yum install -y git
 yum install -y graphviz
 yum install -y pkgconfig
-yum install -y python3
+yum install -y python3-devel
 yum install -y boost-system
 yum install -y boost-python
 yum install -y boost-filesystem
@@ -37,7 +37,7 @@ yum install -y zlib-devel
 yum install http://repo.okay.com.mx/centos/7/x86_64/release/okay-release-1-1.noarch.rpm
 yum install -y ninja-build
 yum install -y wget
-yum install -y openssl-devel
+yum install -y openssl-devel 
 yum install -y java-11-openjdk-devel
 
 pip3 install orderedmultidict
