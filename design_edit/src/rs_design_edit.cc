@@ -1000,8 +1000,9 @@ struct DesignEditRapidSilicon : public ScriptPass {
               if (std::find(io_prim_wires.begin(), io_prim_wires.end(), bit.wire->name.str()) !=
                   io_prim_wires.end()) {
                 if (cell->input(portName) &&
-                  portName.str() != "\\CLK_IN" &&
-                  portName.str() != "\\C" &&
+                  portName != RTLIL::escape_id("CLK_IN") &&
+                  portName != RTLIL::escape_id("C") &&
+                  portName != RTLIL::escape_id("PLL_CLK") &&
                   (is_out_prim || is_intf_prim)) {
                   if (unset_port)
                   {
@@ -1574,8 +1575,9 @@ struct DesignEditRapidSilicon : public ScriptPass {
                 process_wire(cell, portName, wire);
                 if (is_out_prim || is_intf_prim) {
                   if (cell->input(portName)) {
-                    if (portName.str() != "\\CLK_IN" &&
-                      portName.str() != "\\C")
+                    if (portName != RTLIL::escape_id("CLK_IN") &&
+                      portName != RTLIL::escape_id("C") &&
+                      portName != RTLIL::escape_id("PLL_CLK"))
                       out_prim_ins.insert(wire->name.str());
                   }
                 }
@@ -1596,8 +1598,9 @@ struct DesignEditRapidSilicon : public ScriptPass {
                   process_wire(cell, portName, wire);
                   if (is_out_prim || is_intf_prim) {
                     if (cell->input(portName)) {
-                      if (portName.str() != "\\CLK_IN" &&
-                        portName.str() != "\\C")
+                      if (portName != RTLIL::escape_id("CLK_IN") &&
+                      portName != RTLIL::escape_id("C") &&
+                      portName != RTLIL::escape_id("PLL_CLK"))
                         out_prim_ins.insert(wire->name.str());
                     }
                   } 
