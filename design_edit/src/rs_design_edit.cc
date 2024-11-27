@@ -1811,7 +1811,7 @@ struct DesignEditRapidSilicon : public ScriptPass {
 
     start = high_resolution_clock::now();
     log("Removing extra wires from wrapper module\n");
-    //ToDo
+    rem_extra_wires(wrapper_mod);
     end = high_resolution_clock::now();
     elapsed_time (start, end);
 
