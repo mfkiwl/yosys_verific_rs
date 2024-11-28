@@ -83,23 +83,16 @@ struct DesignEditRapidSilicon : public ScriptPass {
   std::vector<Cell *> remove_prims;
   std::vector<Cell *> remove_fab_prims;                  // TODO : change to unoredred set later
   std::vector<Cell *> remove_non_prims;
-  std::vector<Cell *> remove_wrapper_cells;
   std::unordered_set<Wire *> wires_interface;
   std::unordered_set<Wire *> del_ins;
   std::unordered_set<Wire *> del_outs;
-  std::unordered_set<Wire *> del_interface_wires;
-  std::unordered_set<Wire *> del_wrapper_wires;
   std::unordered_set<Wire *> del_unused;
   std::set<std::pair<Yosys::RTLIL::SigSpec, Yosys::RTLIL::SigSpec>> connections_to_remove;
   std::unordered_set<Wire *> orig_intermediate_wires;
-  std::unordered_set<Wire *> interface_intermediate_wires;
-  std::map<Yosys::RTLIL::SigBit, Yosys::RTLIL::SigBit> wrapper_conns;
   std::map<RTLIL::SigBit, std::vector<RTLIL::Wire *>> io_prim_conn, intf_prim_conn;
-  std::map<RTLIL::SigBit, RTLIL::SigBit> inout_conn_map;
   std::map<Yosys::RTLIL::SigBit, Yosys::RTLIL::SigBit> ifab_sig_map;
   std::map<RTLIL::SigBit, std::vector<RTLIL::SigBit>> ofab_sig_map, ofab_conns;
   pool<SigBit> prim_out_bits;
-  pool<SigBit> unused_prim_outs;
   pool<SigBit> used_bits;
   pool<SigBit> orig_ins, orig_outs, fab_outs, fab_ins;
 
@@ -888,57 +881,6 @@ struct DesignEditRapidSilicon : public ScriptPass {
     }
   }
 
-  void handle_inout_connection(Module* mod)
-  {
-    for(auto &conn : mod->connections())
-      {
-        std::vector<RTLIL::SigBit> conn_lhs = conn.first.to_sigbit_vector();
-        std::vector<RTLIL::SigBit> conn_rhs = conn.second.to_sigbit_vector();
-        bool remove_conn = false;
-        for (size_t i = 0; i < conn_lhs.size(); ++i)
-        {
-          if (conn_rhs[i].wire != nullptr)
-            if (conn_rhs[i].wire->port_input && conn_rhs[i].wire->port_output)
-            {
-              inout_conn_map[conn_lhs[i]] = conn_rhs[i];
-              remove_conn = true;
-            }
-        }
-        if (remove_conn)
-        {
-          connections_to_remove.insert(conn);
-        }
-      }
-
-      remove_extra_conns(mod);
-      connections_to_remove.clear();
-
-      for (auto cell : mod->cells())
-      {
-        for (auto conn : cell->connections())
-        {
-          IdString portName = conn.first;
-          bool unset_port = true;
-          RTLIL::SigSpec sigspec;
-          for (SigBit bit : conn.second)
-          {
-            if (inout_conn_map.count(bit) > 0)
-            {
-              if (unset_port)
-              {
-                cell->unsetPort(portName);
-                unset_port = false;
-              }
-              sigspec.append(inout_conn_map[bit]);
-            } else {
-              sigspec.append(bit);
-            }
-          }
-          if (!unset_port) cell->setPort(portName, sigspec);
-        }
-      }
-  }
-
   void process_wire(Cell *cell, const IdString &portName, RTLIL::Wire *wire) {
     if (cell->input(portName)) {
       if (wire->port_input) {
@@ -1126,71 +1068,7 @@ struct DesignEditRapidSilicon : public ScriptPass {
     }
   }
 
-  void clean_flattened(Module *mod)
-  {
-    for(auto &conn : mod->connections())
-    {
-      std::vector<RTLIL::SigBit> conn_lhs = conn.first.to_sigbit_vector();
-      std::vector<RTLIL::SigBit> conn_rhs = conn.second.to_sigbit_vector();
-      for (size_t i = 0; i < conn_lhs.size(); i++) {
-        if (conn_lhs[i].wire != nullptr && conn_rhs[i].wire != nullptr)
-        {
-          wrapper_conns.insert(std::make_pair(conn_lhs[i], conn_rhs[i]));
-        } else {
-          std::cerr << "Unexpected behaviour from flatten pass" << std::endl;
-        }
-      }
-    }
-
-    for (auto cell : mod->cells()) {
-      string module_name = cell->type.str();
-      bool is_fabric_instance = (module_name.substr(0, 8) == "\\fabric_") ? true : false;
-      if (is_fabric_instance) continue;
-      for (auto conn : cell->connections()) {
-        IdString portName = conn.first;
-        bool unset_port = true;
-        RTLIL::SigSpec sigspec;
-        for (SigBit bit : conn.second)
-        {
-          if (bit.wire != nullptr)
-          {
-            bool appended = false;
-            for (auto it = wrapper_conns.begin(); it != wrapper_conns.end(); ++it) {
-              if (it->second == bit) {
-                if (unset_port) {
-                  cell->unsetPort(portName);
-                  unset_port = false;
-                }
-                sigspec.append(it->first);
-                appended = true;
-                break;
-              } else if (it->first == bit) {
-                if (unset_port) {
-                  cell->unsetPort(portName);
-                  unset_port = false;
-                }
-                sigspec.append(it->second);
-                appended = true;
-                break;
-              }
-            }
-            if(!appended) sigspec.append(bit);
-          }
-          else {
-            sigspec.append(bit);
-          }
-        }
-        if (!unset_port)
-        {
-          cell->setPort(portName, sigspec);
-        }
-      }
-    }
-
-    mod->connections_.clear();
-  }
-
-  void elapsed_time (time_point<high_resolution_clock> start,
+  void elapsed_time(time_point<high_resolution_clock> start,
     time_point<high_resolution_clock> end)
   {
     auto duration = duration_cast<nanoseconds>(end - start);
