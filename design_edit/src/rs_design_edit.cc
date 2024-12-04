@@ -746,7 +746,6 @@ struct DesignEditRapidSilicon : public ScriptPass {
 
   void handle_dangling_outs(Module *module)
   {
-    std::unordered_set<Wire *> dangling_ins;
     for(auto cell : module->cells())
     {
       for (auto &conn : cell->connections())
@@ -832,9 +831,12 @@ struct DesignEditRapidSilicon : public ScriptPass {
           for (SigBit bit : port.second){
             if(!used_bits.count(bit) && cell->output(portName)
               && !bit.wire->port_output){
-              new_ins.erase(bit.wire->name.str());
-              bit.wire->port_input = false;
-              dangling_ins.insert(bit.wire);
+              RTLIL::SigSig new_conn;
+              RTLIL::Wire *new_wire = module->addWire(NEW_ID, 1);
+              new_wire->port_output = true;
+              new_conn.first = new_wire;
+              new_conn.second = bit;
+              module->connect(new_conn);
             }
           }
         }
