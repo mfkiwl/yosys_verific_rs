@@ -510,7 +510,8 @@ struct DesignEditRapidSilicon : public ScriptPass {
         if (in_bit.wire != nullptr)
         {
           remove_fab_prims.push_back(cell);
-          if (fab_ins.count(in_bit) && fab_outs.count(out_bit))
+          if (new_ins.find(in_bit.wire->name.str()) != new_ins.end() &&
+            new_outs.find(out_bit.wire->name.str()) != new_outs.end())
           {
             RTLIL::SigSig new_conn;
             new_conn.first = out_bit;
@@ -541,7 +542,8 @@ struct DesignEditRapidSilicon : public ScriptPass {
         if (in_bit.wire != nullptr)
         {
           remove_fab_prims.push_back(cell);
-          if (fab_ins.count(in_bit) && fab_outs.count(out_bit))
+          if (new_ins.find(in_bit.wire->name.str()) != new_ins.end() &&
+            new_outs.find(out_bit.wire->name.str()) != new_outs.end())
           {
             RTLIL::SigSig new_conn;
             new_conn.first = out_bit;
@@ -575,6 +577,7 @@ struct DesignEditRapidSilicon : public ScriptPass {
       if (cell->type == RTLIL::escape_id("O_FAB") ||
         cell->type == RTLIL::escape_id("I_FAB")) continue;
 
+      string module_name = remove_backslashes(cell->type.str());
       for (auto conn : cell->connections())
       {
         IdString portName = conn.first;
@@ -584,22 +587,44 @@ struct DesignEditRapidSilicon : public ScriptPass {
         {
           if (ofab_sig_map.count(bit))
           {
-            const std::vector<RTLIL::SigBit> outbits = ofab_sig_map[bit];
-            if(outbits.size() < 1) sigspec.append(bit);
-            if(outbits.size() == 1)
+            
+            if ((std::find(primitives.begin(), primitives.end(), module_name) !=
+                primitives.end()) && cell->input(portName))
             {
+              const std::vector<RTLIL::SigBit> outbits = ofab_sig_map[bit];
+              RTLIL::SigSig new_conn;
+              RTLIL::Wire *new_wire = mod->addWire(NEW_ID, 1);
+              new_outs.erase(bit.wire->name.str());
+              new_outs.insert(new_wire->name.str());
+              new_conn.first = new_wire;
+              new_conn.second = outbits[0];
+              mod->connect(new_conn);
               if (unset_port)
-              {
-                cell->unsetPort(portName);
-                unset_port = false;
-              }
-              sigspec.append(outbits[0]);
-            } else if (outbits.size() > 1)
+                {
+                  cell->unsetPort(portName);
+                  unset_port = false;
+                }
+                sigspec.append(new_wire);
+            }
+            else
             {
-              sigspec.append(bit);
-              if (ofab_conns.find(bit) == ofab_conns.end())
+              const std::vector<RTLIL::SigBit> outbits = ofab_sig_map[bit];
+              if(outbits.size() < 1) sigspec.append(bit);
+              if(outbits.size() == 1)
               {
-                ofab_conns.insert({bit, outbits});
+                if (unset_port)
+                {
+                  cell->unsetPort(portName);
+                  unset_port = false;
+                }
+                sigspec.append(outbits[0]);
+              } else if (outbits.size() > 1)
+              {
+                sigspec.append(bit);
+                if (ofab_conns.find(bit) == ofab_conns.end())
+                {
+                  ofab_conns.insert({bit, outbits});
+                }
               }
             }
           } else {
@@ -1683,6 +1708,7 @@ struct DesignEditRapidSilicon : public ScriptPass {
       elapsed_time (start, end);
       intersection_copy_remove(new_ins, new_outs, interface_wires);
       intersect(interface_wires, keep_wires);
+      remove_io_fab_prim(original_mod);
     }
     
     Module *interface_mod = _design->top_module()->clone();
@@ -1843,8 +1869,6 @@ struct DesignEditRapidSilicon : public ScriptPass {
       fixup_mod_ports(original_mod);
 
       get_fabric_ios(original_mod);
-
-      remove_io_fab_prim(original_mod);
 
       start = high_resolution_clock::now();
       log("Deleting non-primitive cells and upgrading wires to ports in interface module\n");
