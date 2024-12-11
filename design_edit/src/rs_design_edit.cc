@@ -83,23 +83,16 @@ struct DesignEditRapidSilicon : public ScriptPass {
   std::vector<Cell *> remove_prims;
   std::vector<Cell *> remove_fab_prims;                  // TODO : change to unoredred set later
   std::vector<Cell *> remove_non_prims;
-  std::vector<Cell *> remove_wrapper_cells;
   std::unordered_set<Wire *> wires_interface;
   std::unordered_set<Wire *> del_ins;
   std::unordered_set<Wire *> del_outs;
-  std::unordered_set<Wire *> del_interface_wires;
-  std::unordered_set<Wire *> del_wrapper_wires;
   std::unordered_set<Wire *> del_unused;
   std::set<std::pair<Yosys::RTLIL::SigSpec, Yosys::RTLIL::SigSpec>> connections_to_remove;
   std::unordered_set<Wire *> orig_intermediate_wires;
-  std::unordered_set<Wire *> interface_intermediate_wires;
-  std::map<Yosys::RTLIL::SigBit, Yosys::RTLIL::SigBit> wrapper_conns;
   std::map<RTLIL::SigBit, std::vector<RTLIL::Wire *>> io_prim_conn, intf_prim_conn;
-  std::map<RTLIL::SigBit, RTLIL::SigBit> inout_conn_map;
   std::map<Yosys::RTLIL::SigBit, Yosys::RTLIL::SigBit> ifab_sig_map;
   std::map<RTLIL::SigBit, std::vector<RTLIL::SigBit>> ofab_sig_map, ofab_conns;
   pool<SigBit> prim_out_bits;
-  pool<SigBit> unused_prim_outs;
   pool<SigBit> used_bits;
   pool<SigBit> orig_ins, orig_outs, fab_outs, fab_ins;
 
@@ -847,7 +840,7 @@ struct DesignEditRapidSilicon : public ScriptPass {
       string module_name = remove_backslashes(cell->type.str());
       if (std::find(primitives.begin(), primitives.end(), module_name) !=
           primitives.end()) {
-        //EDA-3010: output primitives cal also have danlging output wire 
+        //EDA-3010: output primitives can also have danlging output wire
         //bool is_out_prim = (module_name.substr(0, 2) == "O_") ? true : false;
         //if (is_out_prim) continue;
         // Upgrading dangling outs of input primtives to output ports
@@ -911,57 +904,6 @@ struct DesignEditRapidSilicon : public ScriptPass {
         ++it;
       }
     }
-  }
-
-  void handle_inout_connection(Module* mod)
-  {
-    for(auto &conn : mod->connections())
-      {
-        std::vector<RTLIL::SigBit> conn_lhs = conn.first.to_sigbit_vector();
-        std::vector<RTLIL::SigBit> conn_rhs = conn.second.to_sigbit_vector();
-        bool remove_conn = false;
-        for (size_t i = 0; i < conn_lhs.size(); ++i)
-        {
-          if (conn_rhs[i].wire != nullptr)
-            if (conn_rhs[i].wire->port_input && conn_rhs[i].wire->port_output)
-            {
-              inout_conn_map[conn_lhs[i]] = conn_rhs[i];
-              remove_conn = true;
-            }
-        }
-        if (remove_conn)
-        {
-          connections_to_remove.insert(conn);
-        }
-      }
-
-      remove_extra_conns(mod);
-      connections_to_remove.clear();
-
-      for (auto cell : mod->cells())
-      {
-        for (auto conn : cell->connections())
-        {
-          IdString portName = conn.first;
-          bool unset_port = true;
-          RTLIL::SigSpec sigspec;
-          for (SigBit bit : conn.second)
-          {
-            if (inout_conn_map.count(bit) > 0)
-            {
-              if (unset_port)
-              {
-                cell->unsetPort(portName);
-                unset_port = false;
-              }
-              sigspec.append(inout_conn_map[bit]);
-            } else {
-              sigspec.append(bit);
-            }
-          }
-          if (!unset_port) cell->setPort(portName, sigspec);
-        }
-      }
   }
 
   void process_wire(Cell *cell, const IdString &portName, RTLIL::Wire *wire) {
@@ -1151,145 +1093,7 @@ struct DesignEditRapidSilicon : public ScriptPass {
     }
   }
 
-  bool is_clk_out(Module *mod, Wire* rhs_wire, std::unordered_set<std::string> &prims)
-  {
-    bool is_clk_output = false;
-    for (auto cell : mod->cells()) {
-      string module_name = remove_backslashes(cell->type.str());
-      if (std::find(prims.begin(), prims.end(), module_name) !=
-          prims.end()) {
-        for (auto conn : cell->connections()) {
-          IdString portName = conn.first;
-          RTLIL::SigSpec actual = conn.second;
-          if (actual.is_chunk()) {
-            const RTLIL::SigChunk chunk = actual.as_chunk();
-            if(chunk.wire == NULL) continue;
-            if(chunk.wire->name.str() == rhs_wire->name.str() &&
-              (module_name.substr(0, 4) == "CLK_"))
-            {
-              is_clk_output = true;
-            }
-          }
-        }
-      }
-    }
-    return is_clk_output;
-  }
-
-  void update_prim_connections(Module* mod, std::unordered_set<std::string> &prims, std::unordered_set<Wire *> &del_intermediate_wires)
-  {
-    for (auto cell : mod->cells()) {
-      string module_name = remove_backslashes(cell->type.str());
-      if (std::find(prims.begin(), prims.end(), module_name) !=
-          prims.end()) {
-        for (auto conn : cell->connections()) {
-          IdString portName = conn.first;
-          RTLIL::SigSpec actual = conn.second;
-          if (actual.is_chunk()) {
-            const RTLIL::SigChunk chunk = actual.as_chunk();
-            RTLIL::Wire *wire = actual.as_chunk().wire;
-            if(chunk.wire == NULL) continue;
-            for (const auto& connection : connections_to_remove)
-            {
-              const Yosys::RTLIL::SigSpec lhs = connection.first;
-              const Yosys::RTLIL::SigSpec rhs = connection.second;
-              const RTLIL::SigChunk lhs_chunk = lhs.as_chunk();
-              const RTLIL::SigChunk rhs_chunk = rhs.as_chunk();
-              if ((chunk.width == chunk.wire->width && chunk.offset == 0) &&
-                (lhs_chunk.width == lhs_chunk.wire->width && lhs_chunk.offset == 0) &&
-                (lhs_chunk.wire->name.str() == chunk.wire->name.str()))
-              {
-                cell->unsetPort(portName);
-                cell->setPort(portName, rhs);
-                del_intermediate_wires.insert(wire);
-              } else if ((chunk.width == 1) &&
-                (lhs_chunk.wire->name.str() == chunk.wire->name.str()))
-              {
-                if (lhs_chunk.width == 1)
-                {
-                  cell->unsetPort(portName);
-                  cell->setPort(portName, rhs);
-                  del_intermediate_wires.insert(wire);
-                } else if (lhs_chunk.width == lhs_chunk.wire->width && lhs_chunk.offset == 0) {
-                  unsigned offset = chunk.offset + chunk.wire->start_offset ;
-                  auto conn_rhs = connection.second.to_sigbit_vector();
-                  cell->unsetPort(portName);
-                  cell->setPort(portName, conn_rhs.at(offset));
-                  del_intermediate_wires.insert(wire);
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  void clean_flattened(Module *mod)
-  {
-    for(auto &conn : mod->connections())
-    {
-      std::vector<RTLIL::SigBit> conn_lhs = conn.first.to_sigbit_vector();
-      std::vector<RTLIL::SigBit> conn_rhs = conn.second.to_sigbit_vector();
-      for (size_t i = 0; i < conn_lhs.size(); i++) {
-        if (conn_lhs[i].wire != nullptr && conn_rhs[i].wire != nullptr)
-        {
-          wrapper_conns.insert(std::make_pair(conn_lhs[i], conn_rhs[i]));
-        } else {
-          std::cerr << "Unexpected behaviour from flatten pass" << std::endl;
-        }
-      }
-    }
-
-    for (auto cell : mod->cells()) {
-      string module_name = cell->type.str();
-      bool is_fabric_instance = (module_name.substr(0, 8) == "\\fabric_") ? true : false;
-      if (is_fabric_instance) continue;
-      for (auto conn : cell->connections()) {
-        IdString portName = conn.first;
-        bool unset_port = true;
-        RTLIL::SigSpec sigspec;
-        for (SigBit bit : conn.second)
-        {
-          if (bit.wire != nullptr)
-          {
-            bool appended = false;
-            for (auto it = wrapper_conns.begin(); it != wrapper_conns.end(); ++it) {
-              if (it->second == bit) {
-                if (unset_port) {
-                  cell->unsetPort(portName);
-                  unset_port = false;
-                }
-                sigspec.append(it->first);
-                appended = true;
-                break;
-              } else if (it->first == bit) {
-                if (unset_port) {
-                  cell->unsetPort(portName);
-                  unset_port = false;
-                }
-                sigspec.append(it->second);
-                appended = true;
-                break;
-              }
-            }
-            if(!appended) sigspec.append(bit);
-          }
-          else {
-            sigspec.append(bit);
-          }
-        }
-        if (!unset_port)
-        {
-          cell->setPort(portName, sigspec);
-        }
-      }
-    }
-
-    mod->connections_.clear();
-  }
-
-  void elapsed_time (time_point<high_resolution_clock> start,
+  void elapsed_time(time_point<high_resolution_clock> start,
     time_point<high_resolution_clock> end)
   {
     auto duration = duration_cast<nanoseconds>(end - start);
@@ -1710,10 +1514,7 @@ struct DesignEditRapidSilicon : public ScriptPass {
       intersect(interface_wires, keep_wires);
       remove_io_fab_prim(original_mod);
     }
-    
-    Module *interface_mod = _design->top_module()->clone();
-    std::string interface_mod_name = "\\interface_" + original_mod_name;
-    interface_mod->name = interface_mod_name;
+
     Module *wrapper_mod = original_mod->clone();
     std::string wrapper_mod_name = "\\" + original_mod_name;
     wrapper_mod->name = wrapper_mod_name;
@@ -1753,41 +1554,6 @@ struct DesignEditRapidSilicon : public ScriptPass {
           continue;
         }
       }
-      end = high_resolution_clock::now();
-      elapsed_time (start, end);
-
-      start = high_resolution_clock::now();
-      log("Handling I_BUF->Fabric->CLK_BUF\n");
-      for (auto &conn : original_mod->connections()) {
-        RTLIL::SigSpec lhs = conn.first;
-        RTLIL::SigSpec rhs = conn.second;
-        if(lhs.is_chunk() && rhs.is_chunk())
-        {
-          const RTLIL::SigChunk lhs_chunk = lhs.as_chunk();
-          const RTLIL::SigChunk rhs_chunk = rhs.as_chunk();
-          if((lhs_chunk.wire != nullptr) && (rhs_chunk.wire != nullptr))
-          {
-            if((lhs_chunk.wire->port_input || lhs_chunk.wire->port_output) &&
-              (rhs_chunk.wire->port_input || rhs_chunk.wire->port_output) &&
-              (outputs.find(lhs_chunk.wire->name.str()) == outputs.end()))
-            {
-              if(is_clk_out(original_mod, rhs_chunk.wire, primitives) &&
-                inputs.find(rhs_chunk.wire->name.str()) == inputs.end())
-              {
-                lhs_chunk.wire->port_input = false;
-                lhs_chunk.wire->port_output = false;
-                rhs_chunk.wire->port_input = false;
-                rhs_chunk.wire->port_output = false;
-                connections_to_remove.insert(conn);
-              }
-            }
-          }
-        }
-      }
-
-      remove_extra_conns(original_mod);
-      connections_to_remove.clear();
-      update_prim_connections(original_mod, primitives, orig_intermediate_wires);
       end = high_resolution_clock::now();
       elapsed_time (start, end);
 
@@ -1871,8 +1637,8 @@ struct DesignEditRapidSilicon : public ScriptPass {
       get_fabric_ios(original_mod);
 
       start = high_resolution_clock::now();
-      log("Deleting non-primitive cells and upgrading wires to ports in interface module\n");
-      for (auto cell : interface_mod->cells()) {
+      log("Deleting non-primitive cells\n");
+      for (auto cell : wrapper_mod->cells()) {
         string module_name = remove_backslashes(cell->type.str());
         if (std::find(primitives.begin(), primitives.end(), module_name) ==
             primitives.end()) {
@@ -1880,21 +1646,18 @@ struct DesignEditRapidSilicon : public ScriptPass {
         }
       }
 
-      delete_cells(interface_mod, remove_non_prims);
+      delete_cells(wrapper_mod, remove_non_prims);
 
-      for (auto wire : interface_mod->wires()) {
+      for (auto wire : wrapper_mod->wires()) {
         std::string wire_name = wire->name.str();
         if (new_ins.find(wire_name) != new_ins.end()) {
-          wire->port_output = true;
           continue;
         }
         if (new_outs.find(wire_name) != new_outs.end()) {
-          wire->port_input = true;
           continue;
         }
         if (common_clks_resets.find(wire_name) != common_clks_resets.end())
         {
-          wire->port_output = true;
           continue;
         }
         if (interface_wires.find(wire_name) != interface_wires.end()) {
@@ -1906,54 +1669,12 @@ struct DesignEditRapidSilicon : public ScriptPass {
         if (outputs.find(wire_name) != outputs.end()) {
           continue;
         }
-        del_interface_wires.insert(wire);
       }
-
       end = high_resolution_clock::now();
       elapsed_time (start, end);
 
-      start = high_resolution_clock::now();
-      log("Handling I_BUF->Fabric->CLK_BUF in interface module\n");
-      for (auto &conn : interface_mod->connections()) {
-        RTLIL::SigSpec lhs = conn.first;
-        RTLIL::SigSpec rhs = conn.second;
-        if(lhs.is_chunk() && rhs.is_chunk())
-        {
-          const RTLIL::SigChunk lhs_chunk = lhs.as_chunk();
-          const RTLIL::SigChunk rhs_chunk = rhs.as_chunk();
-          if((lhs_chunk.wire != nullptr) && (rhs_chunk.wire != nullptr))
-          {
-            if((lhs_chunk.wire->port_input || lhs_chunk.wire->port_output) &&
-              (rhs_chunk.wire->port_input || rhs_chunk.wire->port_output) &&
-              (outputs.find(lhs_chunk.wire->name.str()) == outputs.end()))
-            {
-              if(is_clk_out(interface_mod, lhs_chunk.wire, primitives) &&
-                inputs.find(rhs_chunk.wire->name.str()) == inputs.end())
-              {
-                lhs_chunk.wire->port_input = false;
-                lhs_chunk.wire->port_output = false;
-                rhs_chunk.wire->port_input = false;
-                rhs_chunk.wire->port_output = false;
-                connections_to_remove.insert(conn);
-              }
-            }
-          }
-        }
-      }
-
-      update_prim_connections(interface_mod, primitives, interface_intermediate_wires);
-      end = high_resolution_clock::now();
-      elapsed_time (start, end);
-
-      interface_mod->connections_.clear();
+      wrapper_mod->connections_.clear();
       connections_to_remove.clear();
-      start = high_resolution_clock::now();
-      log("Removing extra wires from interface module\n");
-      for (auto wire : del_interface_wires) {
-        interface_mod->remove({wire});
-      }
-      end = high_resolution_clock::now();
-      elapsed_time (start, end);
 
       delete_wires(original_mod, orig_intermediate_wires);
       fixup_mod_ports(original_mod);
@@ -1967,28 +1688,10 @@ struct DesignEditRapidSilicon : public ScriptPass {
       rem_extra_wires(original_mod);
 
       reportInfoFabricClocks(original_mod);
-
-      delete_wires(interface_mod, interface_intermediate_wires);
-      interface_mod->fixup_ports();
     }
 
     start = high_resolution_clock::now();
-    log("Removing cells from wrapper module\n");
-    for (auto cell : wrapper_mod->cells()) {
-      string module_name = cell->type.str();
-      remove_wrapper_cells.push_back(cell);
-    }
-
-    for (auto cell : remove_wrapper_cells) {
-      wrapper_mod->remove(cell);
-    }
-    end = high_resolution_clock::now();
-    elapsed_time (start, end);
-
-    wrapper_mod->connections_.clear();
-
-    start = high_resolution_clock::now();
-    log("Instantiating fabric and interface modules\n");
+    log("Instantiating fabric module\n");
     // Add instances of the original and interface modules to the wrapper module
     Cell *orig_mod_inst = wrapper_mod->addCell("\\fabric_instance", original_mod->name);
     for (auto wire : original_mod->wires()) {
@@ -1999,57 +1702,18 @@ struct DesignEditRapidSilicon : public ScriptPass {
       }
     }
 
-    for (auto wire : interface_mod->wires()) {
+
+    for (auto wire : wrapper_mod->wires()) {
       RTLIL::SigSpec conn = wire;
       std::string wire_name = wire->name.str();
-      if (wire->port_input || wire->port_output) {
-        interface_inst_conns.insert(wire_name);
+      if (orig_inst_conns.find(wire_name) != orig_inst_conns.end()) {
+        orig_mod_inst->setPort(wire_name, conn);
       }
     }
-
-    if (supported_tech)
-    {
-      Cell *interface_mod_inst =
-        wrapper_mod->addCell(NEW_ID, interface_mod->name);
-      for (auto wire : wrapper_mod->wires()) {
-        RTLIL::SigSpec conn = wire;
-        std::string wire_name = wire->name.str();
-        if (orig_inst_conns.find(wire_name) == orig_inst_conns.end() &&
-          interface_inst_conns.find(wire_name) == interface_inst_conns.end() &&
-          interface_wires.find(wire_name) == interface_wires.end()) {
-          del_wrapper_wires.insert(wire);
-        } else {
-          if (orig_inst_conns.find(wire_name) != orig_inst_conns.end()) {
-            orig_mod_inst->setPort(wire_name, conn);
-          }
-          if (supported_tech)
-          {
-            if (interface_inst_conns.find(wire_name) !=
-              interface_inst_conns.end()) {
-            interface_mod_inst->setPort(wire_name, conn);
-            }
-          }
-        }
-      }
-    } else {
-      for (auto wire : wrapper_mod->wires()) {
-        RTLIL::SigSpec conn = wire;
-        std::string wire_name = wire->name.str();
-        if (orig_inst_conns.find(wire_name) == orig_inst_conns.end()) {
-          del_wrapper_wires.insert(wire);
-        } else {
-          orig_mod_inst->setPort(wire_name, conn);
-        }
-      }
-    }
-    end = high_resolution_clock::now();
-    elapsed_time (start, end);
 
     start = high_resolution_clock::now();
     log("Removing extra wires from wrapper module\n");
-    for (auto wire : del_wrapper_wires) {
-      wrapper_mod->remove({wire});
-    }
+    rem_extra_wires(wrapper_mod);
     end = high_resolution_clock::now();
     elapsed_time (start, end);
 
@@ -2058,22 +1722,6 @@ struct DesignEditRapidSilicon : public ScriptPass {
     wrapper_mod->fixup_ports();
 
     new_design->add(wrapper_mod);
-    if (supported_tech)
-    {
-      new_design->add(interface_mod);
-    }
-    end = high_resolution_clock::now();
-    elapsed_time (start, end);
-    start = high_resolution_clock::now();
-    log("Flattening wrapper module\n");
-    Pass::call(new_design, "flatten");
-    end = high_resolution_clock::now();
-    elapsed_time (start, end);
-    handle_inout_connection(wrapper_mod);
-
-    start = high_resolution_clock::now();
-    log("Removing extra assigns from wrapper module\n");
-    clean_flattened(wrapper_mod);
     end = high_resolution_clock::now();
     elapsed_time (start, end);
 

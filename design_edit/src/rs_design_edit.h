@@ -62,7 +62,6 @@ enum Technologies { GENERIC, GENESIS, GENESIS_2, GENESIS_3 };
 std::vector<pin_data*> pins;
 std::vector<std::string> wrapper_files;
 std::vector<std::string> post_route_wrapper;
-std::unordered_set<std::string> clk_outs;
 std::unordered_set<std::string> primitives;
 std::unordered_set<std::string> out_prims;
 std::unordered_set<std::string> soc_intf_prims;
@@ -76,7 +75,6 @@ std::unordered_set<std::string> in_prim_outs;
 std::unordered_set<std::string> io_prim_wires;
 std::unordered_set<std::string> common_clks_resets;
 std::unordered_set<std::string> orig_inst_conns;
-std::unordered_set<std::string> interface_inst_conns;
 std::unordered_set<std::string> keep_wires;
 std::string io_config_json;
 std::string sdc_file;
@@ -85,7 +83,5 @@ std::string tech;
 
 std::vector<std::string> tokenizeString(const std::string &input);
 void processSdcFile(std::istream &input);
-void get_loc_map_by_io();
-void write_checker_file();
 
 #endif // DESIGN_EDIT_UTILS_H
